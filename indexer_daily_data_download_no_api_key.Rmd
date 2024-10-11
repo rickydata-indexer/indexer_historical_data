@@ -1,0 +1,208 @@
+---
+title: "Indexer Daily Data Download"
+output: 
+  flexdashboard::flex_dashboard:
+    theme: spacelab
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+# set api key:
+api_key = ''
+
+library(flexdashboard)
+library(shiny)
+library(readr)
+library(dplyr)
+library(DT)
+library(ghql)
+library(jsonlite)
+library(tidyverse)
+library(anytime)
+library(snakecase)
+library(shinycssloaders)
+
+# Ethereum data pull ------------------------------------------------------
+
+## Blocks data for iteration -----------------------------------------------
+
+# connect to endpoint
+con = GraphqlClient$new(
+  url = paste0("https://gateway-arbitrum.network.thegraph.com/api/",api_key,"/subgraphs/id/DZz4kDTdmzWLWsV373w2bSmoar3umKKH9y82SUKr5qmp")
+)
+# initialize a new query
+graphql_request = Query$new()
+# make request
+graphql_request$query('mydata', '{
+  dayBlocks(first: 365, orderBy: day, orderDirection: desc){
+    day
+    startBlockNum
+  }
+}')
+
+# Run query (pull data)
+daily_blocks = con$exec(graphql_request$queries$mydata)
+# convert results from JSON
+daily_blocks = as_tibble(fromJSON(daily_blocks)$data$dayBlocks)
+
+# convert day to date
+daily_blocks = mutate(daily_blocks, day = anytime::utctime(day))
+```
+
+
+
+Column {.sidebar}
+-----------------------------------------------------------------------
+
+```{r}
+textInput("wallet_address", "Enter Ethereum Wallet Address:", "0x6f8a032b4b1ee622ef2f0fc091bdbb98cfae81a3")
+
+numericInput("historical_dates", "Number of historical dates (max 365):", 
+             value = 15, min = 1, max = 365, step = 1)
+
+actionButton("fetch_data", "Fetch Data")
+```
+
+Column 
+-----------------------------------------------------------------------
+
+### Indexer Data
+
+```{r}
+indexer_data = reactiveVal(NULL)
+
+observeEvent(input$fetch_data, {
+  withProgress(message = 'Fetching data...', value = 0, {
+    wallet_address = input$wallet_address
+    num_dates = min(input$historical_dates, 365)  # Ensure max is 365
+    
+    # Use only the specified number of historical dates
+    blocks_to_use = daily_blocks[1:num_dates,]
+    
+    indexer_data = tibble()
+    
+    for (i in seq_along(as.numeric(blocks_to_use$startBlockNum))){
+      incProgress(1/num_dates, detail = paste("Processing block", i, "of", num_dates))
+      
+      block_num = as.numeric(blocks_to_use$startBlockNum[i])
+      print(paste('Now on block:', block_num))
+      Sys.sleep(0.05)
+      
+      # connect to endpoint
+      con = GraphqlClient$new(
+        url = paste0("https://gateway-arbitrum.network.thegraph.com/api/",api_key,"/subgraphs/id/DZz4kDTdmzWLWsV373w2bSmoar3umKKH9y82SUKr5qmp")
+      )
+      # initialize a new query
+      graphql_request = Query$new()
+      # make request
+      graphql_request$query('mydata', paste0('{
+      indexers(block: {number: ', block_num, '}, where: {id: "', tolower(wallet_address), '"}) {
+        id
+        indexingRewardCut
+        indexerIndexingRewards
+        lastDelegationParameterUpdate
+        allocatedTokens
+        allocationCount
+        availableStake
+        createdAt
+        defaultDisplayName
+        delegatedCapacity
+        delegatedStakeRatio
+        delegatedTokens
+        delegationExchangeRate
+        delegatorIndexingRewards
+        delegatorParameterCooldown
+        delegatorQueryFees
+        delegatorShares
+        firstTransferredToL2At
+        firstTransferredToL2AtBlockNumber
+        firstTransferredToL2AtTx
+        forcedClosures
+        geoHash
+        idOnL1
+        idOnL2
+        indexerRewardsOwnGenerationRatio
+        indexingRewardEffectiveCut
+        lastTransferredToL2At
+        lastTransferredToL2AtBlockNumber
+        lastTransferredToL2AtTx
+        lockedTokens
+        overDelegationDilution
+        ownStakeRatio
+        queryFeeCut
+        queryFeeEffectiveCut
+        queryFeeRebates
+        queryFeesCollected
+        rewardsEarned
+        stakedTokens
+        stakedTokensTransferredToL2
+        tokenCapacity
+        tokensLockedUntil
+        totalAllocationCount
+        transferredToL2
+        unstakedTokens
+        url
+      }
+    }'))
+      
+      # Run query (pull data)
+      temp = con$exec(graphql_request$queries$mydata)
+      # convert results from JSON
+      temp = as_tibble(fromJSON(temp)$data$indexers)
+      
+      # add block
+      temp$as_of_block = block_num
+      # add day
+      temp$day = filter(blocks_to_use, startBlockNum == toString(block_num))$day
+      
+      # union data
+      indexer_data = rbind(indexer_data, temp)
+    }
+    
+    # change column names to snake case
+    indexer_data = indexer_data %>% rename_all(snakecase::to_snake_case)
+    
+    # only keep needed columns
+    indexer_data = select(indexer_data, day, as_of_block, url, total_allocation_count, allocation_count, 
+                          available_stake, delegated_capacity, locked_tokens, token_capacity, over_delegation_dilution,
+                          delegated_stake_ratio, delegation_exchange_rate, staked_tokens, unstaked_tokens,
+                          indexer_indexing_rewards, delegator_indexing_rewards, indexing_reward_cut, indexing_reward_effective_cut,
+                          last_delegation_parameter_update, query_fees_collected, query_fee_rebates, 
+                          query_fee_cut, query_fee_effective_cut)
+    
+    # adjust column values, decimals adjustment
+    indexer_data$available_stake = as.numeric(indexer_data$available_stake)/10^18
+    indexer_data$delegated_capacity = as.numeric(indexer_data$delegated_capacity)/10^18
+    indexer_data$locked_tokens = as.numeric(indexer_data$locked_tokens)/10^18
+    indexer_data$token_capacity = as.numeric(indexer_data$token_capacity)/10^18
+    indexer_data$staked_tokens = as.numeric(indexer_data$staked_tokens)/10^18
+    indexer_data$unstaked_tokens = as.numeric(indexer_data$unstaked_tokens)/10^18
+    indexer_data$indexer_indexing_rewards = as.numeric(indexer_data$indexer_indexing_rewards)/10^18
+    indexer_data$delegator_indexing_rewards = as.numeric(indexer_data$delegator_indexing_rewards)/10^18
+    indexer_data$query_fees_collected = as.numeric(indexer_data$query_fees_collected)/10^18
+    indexer_data$query_fee_rebates = as.numeric(indexer_data$query_fee_rebates)/10^18
+    
+    # Update the reactive value
+    indexer_data(indexer_data)
+  })
+})
+
+output$indexer_table = renderDataTable({
+  req(indexer_data())
+  datatable(indexer_data(),
+            escape = FALSE,
+            extensions = "Buttons",
+            options = list(
+              scrollX = TRUE,
+              scrollY = "500px",
+              paging = TRUE,
+              searching = TRUE,
+              ordering = TRUE,
+              dom = 'Bfrtip',
+              buttons = c('copy', 'csv', 'excel', 'pdf'),
+              pageLength = 50
+            ))
+})
+
+withSpinner(dataTableOutput("indexer_table"))
+```
