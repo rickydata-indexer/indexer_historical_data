@@ -1,4 +1,4 @@
-<img width="1502" alt="image" src="https://github.com/user-attachments/assets/179c1c59-4b59-4d7c-b9e3-fc28ed92ffd5"># Indexer Historical Data Download
+# Indexer Historical Data Download
 
 https://predictcrypto.shinyapps.io/indexer_daily_data_download/
 
