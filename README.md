@@ -1,6 +1,9 @@
 # Indexer Historical Data Download
 
-This R Markdown script allows you to fetch and analyze historical data for indexers on the Arbitrum network using The Graph's API.
+Click on the "Fetch Data" button to download the data after configuring the app to the correct wallet:
+<img width="1497" alt="image" src="https://github.com/user-attachments/assets/ef7a796e-5d2d-4d7f-9cac-433ad3bb7693" />
+
+You can run the same script yourself if you would like, setup instructions below.
 
 ## Setup Instructions
 
